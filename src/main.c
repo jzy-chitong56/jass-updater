@@ -75,7 +75,7 @@ static void ShowCustomMsgBox(const wchar_t *title, const wchar_t *message, const
 
     HWND hBtn = CreateWindowExW(0, L"BUTTON", btnText,
         WS_CHILD | WS_VISIBLE | BS_DEFPUSHBUTTON,
-        120, 100, 120, 32, dlg, NULL, hInst, NULL);
+        120, 100, 120, 32, dlg, (HMENU)1001, hInst, NULL);
 
     HFONT hFont = (HFONT)GetStockObject(DEFAULT_GUI_FONT);
     SendMessageW(hBtn, WM_SETFONT, (WPARAM)hFont, TRUE);
@@ -100,7 +100,8 @@ static void ShowCustomMsgBox(const wchar_t *title, const wchar_t *message, const
             break;
         }
         if (msg.hwnd == dlg || IsChild(dlg, msg.hwnd)) {
-            if (msg.message == WM_COMMAND && LOWORD(msg.wParam) == BN_CLICKED) {
+            if (msg.message == WM_COMMAND && LOWORD(msg.wParam) == 1001 &&
+                HIWORD(msg.wParam) == BN_CLICKED) {
                 DestroyWindow(dlg);
                 break;
             }
