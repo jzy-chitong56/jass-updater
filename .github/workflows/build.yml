@@ -1,0 +1,62 @@
+name: Build Jass Updater
+
+on:
+  push:
+    branches: [master, main]
+    paths:
+      - "src/**"
+      - ".github/workflows/**"
+  workflow_dispatch:
+
+jobs:
+  build:
+    runs-on: ubuntu-latest
+
+    strategy:
+      matrix:
+        arch: [x64, x86]
+        config: [release, debug]
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Install MinGW toolchain
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y gcc-mingw-w64-x86-64 gcc-mingw-w64-i686
+
+      - name: Determine compiler and defines
+        id: vars
+        run: |
+          if [ "${{ matrix.arch }}" = "x64" ]; then
+            echo "CC=x86_64-w64-mingw32-gcc" >> $GITHUB_OUTPUT
+          else
+            echo "CC=i686-w64-mingw32-gcc" >> $GITHUB_OUTPUT
+          fi
+          if [ "${{ matrix.config }}" = "debug" ]; then
+            echo "DEFINE=-DJASS_DEBUG" >> $GITHUB_OUTPUT
+            echo "SUFFIX=_debug" >> $GITHUB_OUTPUT
+          else
+            echo "DEFINE=" >> $GITHUB_OUTPUT
+            echo "SUFFIX=" >> $GITHUB_OUTPUT
+          fi
+
+      - name: Compile
+        run: |
+          mkdir -p output
+          ${{ steps.vars.outputs.CC }} src/main.c \
+            -o output/JassUpdater_${{ matrix.arch }}${{ steps.vars.outputs.SUFFIX }}.exe \
+            -mwindows -static -static-libgcc \
+            ${{ steps.vars.outputs.DEFINE }} \
+            -lwinhttp -lkernel32 -luser32
+
+      - name: Verify PE
+        run: |
+          file output/*.exe
+
+      - name: Upload artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: JassUpdater_${{ matrix.arch }}_${{ matrix.config }}
+          path: output/*.exe
