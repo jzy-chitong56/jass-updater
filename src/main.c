@@ -51,71 +51,95 @@ typedef enum {
     ERR_REPLACE_FAILED,       /* 替换文件失败 */
 } UpdateError;
 
-/* ---------- 自定义弹窗（支持自定义按钮文案） ---------- */
+/* ---------- 自定义弹窗 ---------- */
+static HWND g_msgBoxHwnd = NULL;
+static volatile BOOL g_msgBoxClosed = FALSE;
+
+static LRESULT CALLBACK MsgBoxWndProc(HWND hwnd, UINT msg, WPARAM wParam, LPARAM lParam)
+{
+    switch (msg) {
+    case WM_COMMAND:
+        if (LOWORD(wParam) == 1001 && HIWORD(wParam) == BN_CLICKED) {
+            g_msgBoxClosed = TRUE;
+            DestroyWindow(hwnd);
+            return 0;
+        }
+        break;
+    case WM_CLOSE:
+        g_msgBoxClosed = TRUE;
+        DestroyWindow(hwnd);
+        return 0;
+    case WM_DESTROY:
+        g_msgBoxClosed = TRUE;
+        break;
+    }
+    return DefWindowProcW(hwnd, msg, wParam, lParam);
+}
+
 static void ShowCustomMsgBox(const wchar_t *title, const wchar_t *message, const wchar_t *btnText)
 {
-    HWND hwnd = GetDesktopWindow();
-    HINSTANCE hInst = (HINSTANCE)GetWindowLongPtr(hwnd, GWLP_HINSTANCE);
+    HWND hwndOwner = GetDesktopWindow();
+    HINSTANCE hInst = (HINSTANCE)GetWindowLongPtrW(hwndOwner, GWLP_HINSTANCE);
+
+    static BOOL classRegistered = FALSE;
+    if (!classRegistered) {
+        WNDCLASSW wc = {0};
+        wc.lpfnWndProc = MsgBoxWndProc;
+        wc.hInstance = hInst;
+        wc.lpszClassName = L"JassMsgBox";
+        wc.hCursor = LoadCursor(NULL, IDC_ARROW);
+        wc.hbrBackground = (HBRUSH)(COLOR_WINDOW + 1);
+        RegisterClassW(&wc);
+        classRegistered = TRUE;
+    }
+
+    g_msgBoxClosed = FALSE;
 
     HWND dlg = CreateWindowExW(
         WS_EX_DLGMODALFRAME | WS_EX_TOPMOST,
-        L"#32770", title,
-        WS_POPUP | WS_CAPTION | WS_SYSMENU | DS_MODALFRAME,
+        L"JassMsgBox", title,
+        WS_POPUP | WS_CAPTION | WS_SYSMENU,
         CW_USEDEFAULT, CW_USEDEFAULT, 360, 180,
-        hwnd, NULL, hInst, NULL);
-
+        hwndOwner, NULL, hInst, NULL);
     if (!dlg) {
-        MessageBoxW(hwnd, message, title, MB_OK | MB_ICONINFORMATION);
+        MessageBoxW(hwndOwner, message, title, MB_OK | MB_ICONINFORMATION);
         return;
     }
+    g_msgBoxHwnd = dlg;
 
     CreateWindowExW(0, L"STATIC", message,
-        WS_CHILD | WS_VISIBLE | SS_LEFT,
-        20, 25, 310, 60, dlg, NULL, hInst, NULL);
+        WS_CHILD | WS_VISIBLE | SS_LEFT | SS_CENTERIMAGE,
+        20, 20, 310, 60, dlg, NULL, hInst, NULL);
 
     HWND hBtn = CreateWindowExW(0, L"BUTTON", btnText,
         WS_CHILD | WS_VISIBLE | BS_DEFPUSHBUTTON,
-        120, 100, 120, 32, dlg, (HMENU)1001, hInst, NULL);
-
+        120, 95, 120, 32, dlg, (HMENU)1001, hInst, NULL);
     HFONT hFont = (HFONT)GetStockObject(DEFAULT_GUI_FONT);
     SendMessageW(hBtn, WM_SETFONT, (WPARAM)hFont, TRUE);
 
     RECT rcOwner, rcDlg;
-    GetWindowRect(hwnd, &rcOwner);
+    GetWindowRect(hwndOwner, &rcOwner);
     GetWindowRect(dlg, &rcDlg);
     int x = rcOwner.left + ((rcOwner.right - rcOwner.left) - (rcDlg.right - rcDlg.left)) / 2;
     int y = rcOwner.top + ((rcOwner.bottom - rcOwner.top) - (rcDlg.bottom - rcDlg.top)) / 2;
     SetWindowPos(dlg, NULL, x, y, 0, 0, SWP_NOSIZE | SWP_NOZORDER);
 
+    EnableWindow(hwndOwner, FALSE);
     ShowWindow(dlg, SW_SHOW);
     UpdateWindow(dlg);
 
     MSG msg;
-    BOOL bRet;
-    EnableWindow(hwnd, FALSE);
-    while ((bRet = GetMessageW(&msg, NULL, 0, 0)) != 0) {
-        if (bRet == -1) break;
-        if (msg.message == WM_KEYDOWN && msg.wParam == VK_RETURN) {
-            DestroyWindow(dlg);
-            break;
-        }
-        if (msg.hwnd == dlg || IsChild(dlg, msg.hwnd)) {
-            if (msg.message == WM_COMMAND && LOWORD(msg.wParam) == 1001 &&
-                HIWORD(msg.wParam) == BN_CLICKED) {
-                DestroyWindow(dlg);
-                break;
-            }
-            if (!IsDialogMessageW(dlg, &msg)) {
-                TranslateMessage(&msg);
-                DispatchMessageW(&msg);
-            }
-        } else {
+    while (!g_msgBoxClosed && GetMessageW(&msg, NULL, 0, 0) > 0) {
+        if (!IsWindow(dlg) || !IsDialogMessageW(dlg, &msg)) {
             TranslateMessage(&msg);
             DispatchMessageW(&msg);
         }
+        if (g_msgBoxClosed) break;
     }
-    EnableWindow(hwnd, TRUE);
-    SetForegroundWindow(hwnd);
+
+    EnableWindow(hwndOwner, TRUE);
+    SetForegroundWindow(hwndOwner);
+    g_msgBoxHwnd = NULL;
 }
 
 /* ---------- 网络下载 ---------- */
@@ -185,6 +209,29 @@ done:
     return result;
 }
 
+/* ---------- 不区分大小写的宽字符串匹配 ---------- */
+static BOOL wcsStartsWithCI(const wchar_t *str, const wchar_t *prefix)
+{
+    while (*prefix) {
+        wchar_t a = *str, b = *prefix;
+        if (a >= L'A' && a <= L'Z') a += 32;
+        if (b >= L'A' && b <= L'Z') b += 32;
+        if (a != b) return FALSE;
+        str++;
+        prefix++;
+    }
+    return TRUE;
+}
+
+static BOOL wcsContainsCI(const wchar_t *str, const wchar_t *sub)
+{
+    while (*str) {
+        if (wcsStartsWithCI(str, sub)) return TRUE;
+        str++;
+    }
+    return FALSE;
+}
+
 /* ---------- 查找插件 static 目录 ---------- */
 static int FindPluginStaticDirs(wchar_t outList[][MAX_PATH], int maxCount)
 {
@@ -201,40 +248,58 @@ static int FindPluginStaticDirs(wchar_t outList[][MAX_PATH], int maxCount)
     wchar_t usersPath[MAX_PATH];
     swprintf_s(usersPath, MAX_PATH, L"%sUsers\\*", drive);
 
-    WIN32_FIND_DATAW fd;
-    HANDLE hFind = FindFirstFileW(usersPath, &fd);
+    WIN32_FIND_DATAW fdUser;
+    HANDLE hFind = FindFirstFileW(usersPath, &fdUser);
     if (hFind == INVALID_HANDLE_VALUE) return 0;
 
     do {
-        if (!(fd.dwFileAttributes & FILE_ATTRIBUTE_DIRECTORY)) continue;
-        if (wcscmp(fd.cFileName, L".") == 0 || wcscmp(fd.cFileName, L"..") == 0) continue;
+        if (!(fdUser.dwFileAttributes & FILE_ATTRIBUTE_DIRECTORY)) continue;
+        if (wcscmp(fdUser.cFileName, L".") == 0 || wcscmp(fdUser.cFileName, L"..") == 0) continue;
 
-        wchar_t extPath[MAX_PATH];
-        swprintf_s(extPath, MAX_PATH, L"%sUsers\\%s\\.vscode\\extensions\\*",
-            drive, fd.cFileName);
+        const wchar_t *vscodeDirs[] = { L".vscode", L".vscode-insiders" };
+        for (int v = 0; v < 2; v++) {
+            wchar_t extPath[MAX_PATH];
+            swprintf_s(extPath, MAX_PATH, L"%sUsers\\%s\\%s\\extensions\\*",
+                drive, fdUser.cFileName, vscodeDirs[v]);
 
-        HANDLE hExt = FindFirstFileW(extPath, &fd);
-        if (hExt == INVALID_HANDLE_VALUE) continue;
+            WIN32_FIND_DATAW fdExt;
+            HANDLE hExt = FindFirstFileW(extPath, &fdExt);
+            if (hExt == INVALID_HANDLE_VALUE) continue;
 
-        WIN32_FIND_DATAW extFd;
-        do {
-            if (!(extFd.dwFileAttributes & FILE_ATTRIBUTE_DIRECTORY)) continue;
-            if (wcsncmp(extFd.cFileName, L"jass.jass-", 10) != 0) continue;
+            do {
+                if (!(fdExt.dwFileAttributes & FILE_ATTRIBUTE_DIRECTORY)) continue;
 
-            wchar_t staticPath[MAX_PATH];
-            swprintf_s(staticPath, MAX_PATH, L"%sUsers\\%s\\.vscode\\extensions\\%s\\static",
-                drive, fd.cFileName, extFd.cFileName);
+                wchar_t staticPath[MAX_PATH];
+                swprintf_s(staticPath, MAX_PATH, L"%sUsers\\%s\\%s\\extensions\\%s\\static",
+                    drive, fdUser.cFileName, vscodeDirs[v], fdExt.cFileName);
 
-            DWORD attr = GetFileAttributesW(staticPath);
-            if (attr != INVALID_FILE_ATTRIBUTES && (attr & FILE_ATTRIBUTE_DIRECTORY)) {
-                if (count < maxCount) {
+                DWORD attr = GetFileAttributesW(staticPath);
+                if (attr == INVALID_FILE_ATTRIBUTES || !(attr & FILE_ATTRIBUTE_DIRECTORY)) continue;
+
+                BOOL isJass = FALSE;
+                if (wcsContainsCI(fdExt.cFileName, L"jass")) {
+                    isJass = TRUE;
+                } else {
+                    wchar_t testFile[MAX_PATH];
+                    swprintf_s(testFile, MAX_PATH, L"%s\\common.j", staticPath);
+                    if (GetFileAttributesW(testFile) != INVALID_FILE_ATTRIBUTES) {
+                        isJass = TRUE;
+                    } else {
+                        swprintf_s(testFile, MAX_PATH, L"%s\\war3map.j", staticPath);
+                        if (GetFileAttributesW(testFile) != INVALID_FILE_ATTRIBUTES) {
+                            isJass = TRUE;
+                        }
+                    }
+                }
+
+                if (isJass && count < maxCount) {
                     wcscpy_s(outList[count], MAX_PATH, staticPath);
                     count++;
                 }
-            }
-        } while (FindNextFileW(hExt, &extFd));
-        FindClose(hExt);
-    } while (FindNextFileW(hFind, &fd));
+            } while (FindNextFileW(hExt, &fdExt));
+            FindClose(hExt);
+        }
+    } while (FindNextFileW(hFind, &fdUser));
     FindClose(hFind);
 
     return count;
