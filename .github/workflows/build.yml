@@ -2,10 +2,10 @@ name: Build Jass Updater
 
 on:
   push:
-    branches: [master, main]
+    branches: [main, master]
     paths:
       - "src/**"
-      - ".github/workflows/**"
+      - ".github/workflows/build.yml"
   workflow_dispatch:
 
 jobs:
@@ -43,7 +43,7 @@ jobs:
             -o output/${{ steps.vars.outputs.OUTNAME }} \
             -mwindows -static -static-libgcc \
             ${{ steps.vars.outputs.DEFINE }} \
-            -lwinhttp -lkernel32 -luser32
+            -lwinhttp -lkernel32 -luser32 -lshell32
 
       - name: Verify PE
         run: |
