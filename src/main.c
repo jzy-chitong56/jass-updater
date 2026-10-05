@@ -309,7 +309,7 @@ static void ShowCustomMsgBox(const wchar_t *title, const wchar_t *message, const
         20, 15, dlgW - 40, 30, dlg, NULL, hInst, NULL);
 
     /* 日志标签 */
-    CreateWindowExW(0, L"STATIC", L"运行日志（可选中复制反馈）：",
+    CreateWindowExW(0, L"STATIC", L"运行日志（异常时可复制到源码仓库反馈）：",
         WS_CHILD | WS_VISIBLE | SS_LEFT,
         20, 50, dlgW - 40, 20, dlg, NULL, hInst, NULL);
 
@@ -745,14 +745,42 @@ static HWND g_hBtn = NULL;
 static HWND g_hLink = NULL;
 static HBRUSH g_hLinkBrush = NULL;
 
+/* 控件尺寸（固定） */
+#define BTN_W   180
+#define BTN_H   45
+#define LINK_W  80
+#define LINK_H  20
+
+/* 根据窗口客户区尺寸，自动居中摆放按钮和链接 */
+static void LayoutChildren(HWND hwnd)
+{
+    RECT rc;
+    GetClientRect(hwnd, &rc);
+    int w = rc.right - rc.left;
+    int h = rc.bottom - rc.top;
+
+    /* 整体内容高度 = 按钮 + 间距 + 链接 */
+    int gap = 20;
+    int totalH = BTN_H + gap + LINK_H;
+    int startY = (h - totalH) / 2;
+
+    int btnX = (w - BTN_W) / 2;
+    int btnY = startY;
+    int linkX = (w - LINK_W) / 2;
+    int linkY = startY + BTN_H + gap;
+
+    MoveWindow(g_hBtn, btnX, btnY, BTN_W, BTN_H, TRUE);
+    MoveWindow(g_hLink, linkX, linkY, LINK_W, LINK_H, TRUE);
+}
+
 static LRESULT CALLBACK WndProc(HWND hwnd, UINT msg, WPARAM wParam, LPARAM lParam)
 {
     switch (msg) {
     case WM_CREATE: {
         g_hBtn = CreateWindowExW(0, L"BUTTON", L"开始更新",
             WS_CHILD | WS_VISIBLE | BS_PUSHBUTTON,
-            60, 25, 160, 40, hwnd, (HMENU)100, NULL, NULL);
-        HFONT hFont = CreateFontW(18, 0, 0, 0, FW_BOLD, FALSE, FALSE, FALSE,
+            0, 0, BTN_W, BTN_H, hwnd, (HMENU)100, NULL, NULL);
+        HFONT hFont = CreateFontW(24, 0, 0, 0, FW_BOLD, FALSE, FALSE, FALSE,
             DEFAULT_CHARSET, OUT_DEFAULT_PRECIS, CLIP_DEFAULT_PRECIS,
             DEFAULT_QUALITY, DEFAULT_PITCH | FF_SWISS, L"Microsoft YaHei");
         SendMessageW(g_hBtn, WM_SETFONT, (WPARAM)hFont, TRUE);
@@ -760,15 +788,20 @@ static LRESULT CALLBACK WndProc(HWND hwnd, UINT msg, WPARAM wParam, LPARAM lPara
         /* "查看源码" 文本链接（非按钮样式） */
         g_hLink = CreateWindowExW(0, L"STATIC", L"查看源码",
             WS_CHILD | WS_VISIBLE | SS_NOTIFY | SS_CENTER,
-            100, 80, 80, 20, hwnd, (HMENU)200, NULL, NULL);
-        HFONT hLinkFont = CreateFontW(14, 0, 0, 0, FW_NORMAL, FALSE, TRUE, FALSE,
+            0, 0, LINK_W, LINK_H, hwnd, (HMENU)200, NULL, NULL);
+        HFONT hLinkFont = CreateFontW(20, 0, 0, 0, FW_NORMAL, FALSE, TRUE, FALSE,
             DEFAULT_CHARSET, OUT_DEFAULT_PRECIS, CLIP_DEFAULT_PRECIS,
             DEFAULT_QUALITY, DEFAULT_PITCH | FF_SWISS, L"Microsoft YaHei");
         SendMessageW(g_hLink, WM_SETFONT, (WPARAM)hLinkFont, TRUE);
 
         g_hLinkBrush = (HBRUSH)GetStockObject(HOLLOW_BRUSH);
+
+        LayoutChildren(hwnd);
         break;
     }
+    case WM_SIZE:
+        LayoutChildren(hwnd);
+        break;
     case WM_COMMAND:
         if (LOWORD(wParam) == 100 && HIWORD(wParam) == BN_CLICKED) {
             EnableWindow(g_hBtn, FALSE);
@@ -838,9 +871,9 @@ int WINAPI WinMain(HINSTANCE hInst, HINSTANCE hPrev, LPSTR lpCmd, int nShow)
     wc.hbrBackground = (HBRUSH)(COLOR_WINDOW + 1);
     RegisterClassW(&wc);
 
-    HWND hwnd = CreateWindowExW(0, L"JassUpdaterWnd", L"家猫 Jass 插件函数库更新工具 V1.0",
+    HWND hwnd = CreateWindowExW(0, L"JassUpdaterWnd", L"家猫Jass插件函数库更新工具 V1.0",
         WS_OVERLAPPEDWINDOW & ~WS_THICKFRAME & ~WS_MAXIMIZEBOX,
-        CW_USEDEFAULT, CW_USEDEFAULT, 600, 360,
+        CW_USEDEFAULT, CW_USEDEFAULT, 460, 260,
         NULL, NULL, hInst, NULL);
 
     ShowWindow(hwnd, nShow);
