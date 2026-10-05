@@ -45,10 +45,10 @@ static const int g_fileCount = (int)(sizeof(g_files) / sizeof(g_files[0]));
 /* ---------- 错误原因 ---------- */
 typedef enum {
     ERR_NONE = 0,
-    ERR_PLUGIN_NOT_FOUND,     /* 找不到插件，可能未安装 */
-    ERR_DOWNLOAD_FAILED,      /* 下载文件失败 */
-    ERR_WRITE_FAILED,         /* 文件写入失败 */
-    ERR_REPLACE_FAILED,       /* 替换文件失败 */
+    ERR_PLUGIN_NOT_FOUND,
+    ERR_DOWNLOAD_FAILED,
+    ERR_WRITE_FAILED,
+    ERR_REPLACE_FAILED,
 } UpdateError;
 
 /* ---------- 自定义弹窗 ---------- */
@@ -209,7 +209,7 @@ done:
     return result;
 }
 
-/* ---------- 不区分大小写的宽字符串匹配 ---------- */
+/* ---------- 不区分大小写的宽字符串前缀匹配 ---------- */
 static BOOL wcsStartsWithCI(const wchar_t *str, const wchar_t *prefix)
 {
     while (*prefix) {
@@ -223,84 +223,156 @@ static BOOL wcsStartsWithCI(const wchar_t *str, const wchar_t *prefix)
     return TRUE;
 }
 
-static BOOL wcsContainsCI(const wchar_t *str, const wchar_t *sub)
+/* ---------- 在指定用户目录下查找 jass 插件 ---------- */
+static void ScanUserProfile(const wchar_t *profileDir, wchar_t outList[][MAX_PATH],
+                            int maxCount, int *count)
 {
-    while (*str) {
-        if (wcsStartsWithCI(str, sub)) return TRUE;
-        str++;
+    const wchar_t *vscodeDirs[] = { L".vscode", L".vscode-insiders" };
+
+    for (int v = 0; v < 2; v++) {
+        wchar_t extPath[MAX_PATH];
+        swprintf_s(extPath, MAX_PATH, L"%s\\%s\\extensions\\*", profileDir, vscodeDirs[v]);
+
+        WIN32_FIND_DATAW fdExt;
+        HANDLE hExt = FindFirstFileW(extPath, &fdExt);
+        if (hExt == INVALID_HANDLE_VALUE) continue;
+
+        do {
+            if (!(fdExt.dwFileAttributes & FILE_ATTRIBUTE_DIRECTORY)) continue;
+
+            wchar_t staticPath[MAX_PATH];
+            swprintf_s(staticPath, MAX_PATH, L"%s\\%s\\extensions\\%s\\static",
+                profileDir, vscodeDirs[v], fdExt.cFileName);
+
+            DWORD attr = GetFileAttributesW(staticPath);
+            if (attr == INVALID_FILE_ATTRIBUTES || !(attr & FILE_ATTRIBUTE_DIRECTORY)) continue;
+
+            BOOL isJass = wcsStartsWithCI(fdExt.cFileName, L"jass.");
+            if (!isJass) {
+                wchar_t testFile[MAX_PATH];
+                swprintf_s(testFile, MAX_PATH, L"%s\\common.j", staticPath);
+                if (GetFileAttributesW(testFile) != INVALID_FILE_ATTRIBUTES) {
+                    isJass = TRUE;
+                } else {
+                    swprintf_s(testFile, MAX_PATH, L"%s\\war3map.j", staticPath);
+                    if (GetFileAttributesW(testFile) != INVALID_FILE_ATTRIBUTES) {
+                        isJass = TRUE;
+                    }
+                }
+            }
+
+            if (isJass && *count < maxCount) {
+                wcscpy_s(outList[*count], MAX_PATH, staticPath);
+                (*count)++;
+            }
+        } while (FindNextFileW(hExt, &fdExt));
+        FindClose(hExt);
     }
-    return FALSE;
+}
+
+/* ---------- 收集所有用户目录 ---------- */
+static int CollectUserDirs(wchar_t dirs[][MAX_PATH], int maxCount)
+{
+    int count = 0;
+    wchar_t seen[64][MAX_PATH];
+    int seenCount = 0;
+
+    #define ADD_DIR(p) do { \
+        int _i; \
+        for (_i = 0; _i < seenCount; _i++) { \
+            if (_wcsicmp(seen[_i], (p)) == 0) break; \
+        } \
+        if (_i == seenCount && seenCount < 64) { \
+            wcscpy_s(seen[seenCount++], MAX_PATH, (p)); \
+        } \
+    } while (0)
+
+    /* 1. USERPROFILE 环境变量 */
+    wchar_t userProfile[MAX_PATH];
+    if (GetEnvironmentVariableW(L"USERPROFILE", userProfile, MAX_PATH) > 0) {
+        ADD_DIR(userProfile);
+    }
+
+    /* 2. SystemDrive + \Users */
+    wchar_t sysDrive[MAX_PATH];
+    if (GetEnvironmentVariableW(L"SystemDrive", sysDrive, MAX_PATH) > 0) {
+        wchar_t usersPath[MAX_PATH];
+        swprintf_s(usersPath, MAX_PATH, L"%s\\Users", sysDrive);
+        WIN32_FIND_DATAW fd;
+        wchar_t searchPath[MAX_PATH];
+        swprintf_s(searchPath, MAX_PATH, L"%s\\*", usersPath);
+        HANDLE hFind = FindFirstFileW(searchPath, &fd);
+        if (hFind != INVALID_HANDLE_VALUE) {
+            do {
+                if (!(fd.dwFileAttributes & FILE_ATTRIBUTE_DIRECTORY)) continue;
+                if (wcscmp(fd.cFileName, L".") == 0 || wcscmp(fd.cFileName, L"..") == 0) continue;
+                wchar_t full[MAX_PATH];
+                swprintf_s(full, MAX_PATH, L"%s\\%s", usersPath, fd.cFileName);
+                ADD_DIR(full);
+            } while (FindNextFileW(hFind, &fd));
+            FindClose(hFind);
+        }
+    }
+
+    /* 3. GetWindowsDirectoryW 推导系统盘 */
+    wchar_t winDir[MAX_PATH];
+    if (GetWindowsDirectoryW(winDir, MAX_PATH)) {
+        wchar_t drive[4] = { winDir[0], L':', L'\\', 0 };
+        wchar_t usersPath[MAX_PATH];
+        swprintf_s(usersPath, MAX_PATH, L"%sUsers", drive);
+        WIN32_FIND_DATAW fd;
+        wchar_t searchPath[MAX_PATH];
+        swprintf_s(searchPath, MAX_PATH, L"%s\\*", usersPath);
+        HANDLE hFind = FindFirstFileW(searchPath, &fd);
+        if (hFind != INVALID_HANDLE_VALUE) {
+            do {
+                if (!(fd.dwFileAttributes & FILE_ATTRIBUTE_DIRECTORY)) continue;
+                if (wcscmp(fd.cFileName, L".") == 0 || wcscmp(fd.cFileName, L"..") == 0) continue;
+                wchar_t full[MAX_PATH];
+                swprintf_s(full, MAX_PATH, L"%s\\%s", usersPath, fd.cFileName);
+                ADD_DIR(full);
+            } while (FindNextFileW(hFind, &fd));
+            FindClose(hFind);
+        }
+    }
+
+    /* 4. 兜底 C:\Users */
+    {
+        const wchar_t *cUsers = L"C:\\Users";
+        WIN32_FIND_DATAW fd;
+        wchar_t searchPath[MAX_PATH];
+        swprintf_s(searchPath, MAX_PATH, L"%s\\*", cUsers);
+        HANDLE hFind = FindFirstFileW(searchPath, &fd);
+        if (hFind != INVALID_HANDLE_VALUE) {
+            do {
+                if (!(fd.dwFileAttributes & FILE_ATTRIBUTE_DIRECTORY)) continue;
+                if (wcscmp(fd.cFileName, L".") == 0 || wcscmp(fd.cFileName, L"..") == 0) continue;
+                wchar_t full[MAX_PATH];
+                swprintf_s(full, MAX_PATH, L"%s\\%s", cUsers, fd.cFileName);
+                ADD_DIR(full);
+            } while (FindNextFileW(hFind, &fd));
+            FindClose(hFind);
+        }
+    }
+
+    #undef ADD_DIR
+
+    for (int i = 0; i < seenCount && count < maxCount; i++) {
+        wcscpy_s(dirs[count++], MAX_PATH, seen[i]);
+    }
+    return count;
 }
 
 /* ---------- 查找插件 static 目录 ---------- */
 static int FindPluginStaticDirs(wchar_t outList[][MAX_PATH], int maxCount)
 {
     int count = 0;
-    wchar_t winDir[MAX_PATH];
+    wchar_t userDirs[64][MAX_PATH];
+    int userCount = CollectUserDirs(userDirs, 64);
 
-    if (!GetWindowsDirectoryW(winDir, MAX_PATH)) return 0;
-    wchar_t drive[4];
-    drive[0] = winDir[0];
-    drive[1] = L':';
-    drive[2] = L'\\';
-    drive[3] = 0;
-
-    wchar_t usersPath[MAX_PATH];
-    swprintf_s(usersPath, MAX_PATH, L"%sUsers\\*", drive);
-
-    WIN32_FIND_DATAW fdUser;
-    HANDLE hFind = FindFirstFileW(usersPath, &fdUser);
-    if (hFind == INVALID_HANDLE_VALUE) return 0;
-
-    do {
-        if (!(fdUser.dwFileAttributes & FILE_ATTRIBUTE_DIRECTORY)) continue;
-        if (wcscmp(fdUser.cFileName, L".") == 0 || wcscmp(fdUser.cFileName, L"..") == 0) continue;
-
-        const wchar_t *vscodeDirs[] = { L".vscode", L".vscode-insiders" };
-        for (int v = 0; v < 2; v++) {
-            wchar_t extPath[MAX_PATH];
-            swprintf_s(extPath, MAX_PATH, L"%sUsers\\%s\\%s\\extensions\\*",
-                drive, fdUser.cFileName, vscodeDirs[v]);
-
-            WIN32_FIND_DATAW fdExt;
-            HANDLE hExt = FindFirstFileW(extPath, &fdExt);
-            if (hExt == INVALID_HANDLE_VALUE) continue;
-
-            do {
-                if (!(fdExt.dwFileAttributes & FILE_ATTRIBUTE_DIRECTORY)) continue;
-
-                wchar_t staticPath[MAX_PATH];
-                swprintf_s(staticPath, MAX_PATH, L"%sUsers\\%s\\%s\\extensions\\%s\\static",
-                    drive, fdUser.cFileName, vscodeDirs[v], fdExt.cFileName);
-
-                DWORD attr = GetFileAttributesW(staticPath);
-                if (attr == INVALID_FILE_ATTRIBUTES || !(attr & FILE_ATTRIBUTE_DIRECTORY)) continue;
-
-                BOOL isJass = FALSE;
-                if (wcsContainsCI(fdExt.cFileName, L"jass")) {
-                    isJass = TRUE;
-                } else {
-                    wchar_t testFile[MAX_PATH];
-                    swprintf_s(testFile, MAX_PATH, L"%s\\common.j", staticPath);
-                    if (GetFileAttributesW(testFile) != INVALID_FILE_ATTRIBUTES) {
-                        isJass = TRUE;
-                    } else {
-                        swprintf_s(testFile, MAX_PATH, L"%s\\war3map.j", staticPath);
-                        if (GetFileAttributesW(testFile) != INVALID_FILE_ATTRIBUTES) {
-                            isJass = TRUE;
-                        }
-                    }
-                }
-
-                if (isJass && count < maxCount) {
-                    wcscpy_s(outList[count], MAX_PATH, staticPath);
-                    count++;
-                }
-            } while (FindNextFileW(hExt, &fdExt));
-            FindClose(hExt);
-        }
-    } while (FindNextFileW(hFind, &fdUser));
-    FindClose(hFind);
+    for (int i = 0; i < userCount; i++) {
+        ScanUserProfile(userDirs[i], outList, maxCount, &count);
+    }
 
     return count;
 }
