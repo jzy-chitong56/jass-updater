@@ -1013,7 +1013,7 @@ static LRESULT CALLBACK WndProc(HWND hwnd, UINT msg, WPARAM wParam, LPARAM lPara
                 WBUF_APPEND(msg, 1024, L"\r\n");
             }
             WBUF_APPEND(msg, 1024, L"\r\n备份文件会保留在原目录，命名格式为 原名_back_日期_时间。\r\n备份过多时请自行手动删除旧备份文件。");
-            MessageBoxW(hwnd, msg, L"备份说明", MB_OK | MB_ICONINFORMATION);
+            MessageBoxW(hwnd, msg, L"说明", MB_OK | MB_ICONINFORMATION);
         }
         break;
     case WM_UPDATE_DONE: {
