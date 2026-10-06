@@ -788,6 +788,7 @@ static UpdateError DoUpdate(BOOL doBackup)
 static HWND g_hBtn = NULL;
 static HWND g_hLink = NULL;
 static HWND g_hChkBackup = NULL;
+static HWND g_hHelpIcon = NULL;
 static HBRUSH g_hLinkBrush = NULL;
 
 /* 更新线程与进度框 */
@@ -864,6 +865,9 @@ static void ShowProgressDialog(HWND hwndOwner)
 #define LINK_H      20
 #define CHK_W       120
 #define CHK_H       25
+#define HELP_W      20
+#define HELP_H      25
+#define HELP_GAP    6
 
 /* 根据窗口客户区尺寸，自动居中摆放控件 */
 static void LayoutChildren(HWND hwnd)
@@ -873,7 +877,7 @@ static void LayoutChildren(HWND hwnd)
     int w = rc.right - rc.left;
     int h = rc.bottom - rc.top;
 
-    /* 整体内容高度 = 按钮 + 间距1 + 复选框 + 间距2 + 链接 */
+    /* 整体内容高度 = 按钮 + 间距1 + 复选框行 + 间距2 + 链接 */
     int gap1 = 15;
     int gap2 = 10;
     int totalH = BTN_H + gap1 + CHK_H + gap2 + LINK_H;
@@ -881,13 +885,20 @@ static void LayoutChildren(HWND hwnd)
 
     int btnX = (w - BTN_W) / 2;
     int btnY = startY;
-    int chkX = (w - CHK_W) / 2;
+
+    /* 复选框 + 问号图标作为一组居中 */
+    int groupW = CHK_W + HELP_GAP + HELP_W;
+    int chkX = (w - groupW) / 2;
     int chkY = startY + BTN_H + gap1;
+    int helpX = chkX + CHK_W + HELP_GAP;
+    int helpY = chkY;
+
     int linkX = (w - LINK_W) / 2;
     int linkY = startY + BTN_H + gap1 + CHK_H + gap2;
 
     MoveWindow(g_hBtn, btnX, btnY, BTN_W, BTN_H, TRUE);
     MoveWindow(g_hChkBackup, chkX, chkY, CHK_W, CHK_H, TRUE);
+    MoveWindow(g_hHelpIcon, helpX, helpY, HELP_W, HELP_H, TRUE);
     MoveWindow(g_hLink, linkX, linkY, LINK_W, LINK_H, TRUE);
 }
 
@@ -903,12 +914,21 @@ static LRESULT CALLBACK WndProc(HWND hwnd, UINT msg, WPARAM wParam, LPARAM lPara
             DEFAULT_QUALITY, DEFAULT_PITCH | FF_SWISS, L"Microsoft YaHei");
         SendMessageW(g_hBtn, WM_SETFONT, (WPARAM)hFont, TRUE);
 
-        /* "备份库" 复选框（默认勾选） */
-        g_hChkBackup = CreateWindowExW(0, L"BUTTON", L"备份库",
+        /* "备份库文件" 复选框（默认勾选） */
+        g_hChkBackup = CreateWindowExW(0, L"BUTTON", L"备份库文件",
             WS_CHILD | WS_VISIBLE | BS_AUTOCHECKBOX,
             0, 0, CHK_W, CHK_H, hwnd, (HMENU)300, NULL, NULL);
         SendMessageW(g_hChkBackup, WM_SETFONT, (WPARAM)hFont, TRUE);
         SendMessageW(g_hChkBackup, BM_SETCHECK, BST_CHECKED, 0);
+
+        /* 问号帮助图标（点击显示文件列表） */
+        g_hHelpIcon = CreateWindowExW(0, L"STATIC", L"?",
+            WS_CHILD | WS_VISIBLE | SS_NOTIFY | SS_CENTER,
+            0, 0, HELP_W, HELP_H, hwnd, (HMENU)400, NULL, NULL);
+        HFONT hHelpFont = CreateFontW(18, 0, 0, 0, FW_BOLD, FALSE, FALSE, FALSE,
+            DEFAULT_CHARSET, OUT_DEFAULT_PRECIS, CLIP_DEFAULT_PRECIS,
+            DEFAULT_QUALITY, DEFAULT_PITCH | FF_SWISS, L"Microsoft YaHei");
+        SendMessageW(g_hHelpIcon, WM_SETFONT, (WPARAM)hHelpFont, TRUE);
 
         /* "查看源码" 文本链接（非按钮样式） */
         g_hLink = CreateWindowExW(0, L"STATIC", L"查看源码",
@@ -944,6 +964,18 @@ static LRESULT CALLBACK WndProc(HWND hwnd, UINT msg, WPARAM wParam, LPARAM lPara
         } else if (LOWORD(wParam) == 200 && HIWORD(wParam) == STN_CLICKED) {
             /* 点击"查看源码"，打开 GitHub 仓库 */
             ShellExecuteW(NULL, L"open", GITHUB_REPO_URL, NULL, NULL, SW_SHOWNORMAL);
+        } else if (LOWORD(wParam) == 400 && HIWORD(wParam) == STN_CLICKED) {
+            /* 点击问号图标，显示更新/备份的文件列表 */
+            wchar_t msg[1024];
+            WBUF_INIT(msg, 1024);
+            WBUF_APPEND(msg, 1024, L"将更新和备份以下文件：\r\n\r\n");
+            for (int i = 0; i < g_fileCount; i++) {
+                WBUF_APPEND(msg, 1024, L"  ");
+                WBUF_APPEND(msg, 1024, g_files[i]);
+                WBUF_APPEND(msg, 1024, L"\r\n");
+            }
+            WBUF_APPEND(msg, 1024, L"\r\n备份文件会保留在原目录，命名格式为 原名_back_日期_时间。\r\n备份过多时请自行手动删除旧备份文件。");
+            MessageBoxW(hwnd, msg, L"备份库文件说明", MB_OK | MB_ICONINFORMATION);
         }
         break;
     case WM_UPDATE_DONE: {
@@ -990,7 +1022,7 @@ static LRESULT CALLBACK WndProc(HWND hwnd, UINT msg, WPARAM wParam, LPARAM lPara
     }
     case WM_CTLCOLORSTATIC: {
         HDC hdc = (HDC)wParam;
-        if ((HWND)lParam == g_hLink) {
+        if ((HWND)lParam == g_hLink || (HWND)lParam == g_hHelpIcon) {
             SetTextColor(hdc, RGB(0, 102, 204));
             SetBkMode(hdc, TRANSPARENT);
             return (LRESULT)g_hLinkBrush;
@@ -998,7 +1030,7 @@ static LRESULT CALLBACK WndProc(HWND hwnd, UINT msg, WPARAM wParam, LPARAM lPara
         break;
     }
     case WM_SETCURSOR:
-        if ((HWND)wParam == g_hLink) {
+        if ((HWND)wParam == g_hLink || (HWND)wParam == g_hHelpIcon) {
             SetCursor(LoadCursor(NULL, IDC_HAND));
             return TRUE;
         }
