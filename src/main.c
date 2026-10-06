@@ -858,16 +858,45 @@ static void ShowProgressDialog(HWND hwndOwner)
     UpdateWindow(g_hProgress);
 }
 
-/* 控件尺寸（固定） */
+/* 控件尺寸（按钮/链接固定，复选框与问号图标运行时按文字自适应） */
 #define BTN_W       180
 #define BTN_H       45
 #define LINK_W      80
 #define LINK_H      20
-#define CHK_W       70
-#define CHK_H       25
-#define HELP_W      20
-#define HELP_H      25
 #define HELP_GAP    6
+
+/* 运行时测量得到的自适应尺寸 */
+static int g_chkW = 0, g_chkH = 0;
+static int g_helpW = 0, g_helpH = 0;
+
+/* 测量 STATIC 文本控件在当前字体下的尺寸，加上内边距 */
+static void MeasureTextCtrl(HWND hCtrl, int padX, int padY, int *outW, int *outH)
+{
+    wchar_t txt[256];
+    int n = GetWindowTextW(hCtrl, txt, 256);
+    HDC hdc = GetDC(hCtrl);
+    HFONT hf = (HFONT)SendMessageW(hCtrl, WM_GETFONT, 0, 0);
+    HFONT old = (HFONT)SelectObject(hdc, hf ? hf : (HFONT)GetStockObject(DEFAULT_GUI_FONT));
+    SIZE sz = {0};
+    if (n > 0) GetTextExtentPoint32W(hdc, txt, n, &sz);
+    SelectObject(hdc, old);
+    ReleaseDC(hCtrl, hdc);
+    *outW = sz.cx + padX;
+    *outH = sz.cy + padY;
+}
+
+/* 测量按钮控件理想尺寸：优先 BCM_GETIDEALSIZE，失败则降级到文字测量 */
+static void MeasureButtonCtrl(HWND hCtrl, int *outW, int *outH)
+{
+    SIZE sz = {0};
+    /* BCM_GETIDEALSIZE = 0x1649，返回 TRUE 时 sz 被填充 */
+    if (SendMessageW(hCtrl, 0x00001649, 0, (LPARAM)&sz) && sz.cx > 0) {
+        *outW = sz.cx;
+        *outH = sz.cy;
+        return;
+    }
+    MeasureTextCtrl(hCtrl, 22, 6, outW, outH); /* 22=复选框勾选框+间距 */
+}
 
 /* 根据窗口客户区尺寸，自动居中摆放控件 */
 static void LayoutChildren(HWND hwnd)
@@ -880,25 +909,28 @@ static void LayoutChildren(HWND hwnd)
     /* 整体内容高度 = 按钮 + 间距1 + 复选框行 + 间距2 + 链接 */
     int gap1 = 15;
     int gap2 = 10;
-    int totalH = BTN_H + gap1 + CHK_H + gap2 + LINK_H;
+    int chkH = g_chkH > 0 ? g_chkH : 25;
+    int totalH = BTN_H + gap1 + chkH + gap2 + LINK_H;
     int startY = (h - totalH) / 2;
 
     int btnX = (w - BTN_W) / 2;
     int btnY = startY;
 
     /* 复选框 + 问号图标作为一组居中 */
-    int groupW = CHK_W + HELP_GAP + HELP_W;
+    int chkW = g_chkW > 0 ? g_chkW : 70;
+    int helpW = g_helpW > 0 ? g_helpW : 20;
+    int groupW = chkW + HELP_GAP + helpW;
     int chkX = (w - groupW) / 2;
     int chkY = startY + BTN_H + gap1;
-    int helpX = chkX + CHK_W + HELP_GAP;
+    int helpX = chkX + chkW + HELP_GAP;
     int helpY = chkY;
 
     int linkX = (w - LINK_W) / 2;
-    int linkY = startY + BTN_H + gap1 + CHK_H + gap2;
+    int linkY = startY + BTN_H + gap1 + chkH + gap2;
 
     MoveWindow(g_hBtn, btnX, btnY, BTN_W, BTN_H, TRUE);
-    MoveWindow(g_hChkBackup, chkX, chkY, CHK_W, CHK_H, TRUE);
-    MoveWindow(g_hHelpIcon, helpX, helpY, HELP_W, HELP_H, TRUE);
+    MoveWindow(g_hChkBackup, chkX, chkY, chkW, chkH, TRUE);
+    MoveWindow(g_hHelpIcon, helpX, helpY, helpW, g_helpH > 0 ? g_helpH : 25, TRUE);
     MoveWindow(g_hLink, linkX, linkY, LINK_W, LINK_H, TRUE);
 }
 
@@ -917,14 +949,14 @@ static LRESULT CALLBACK WndProc(HWND hwnd, UINT msg, WPARAM wParam, LPARAM lPara
         /* "备份" 复选框（默认勾选） */
         g_hChkBackup = CreateWindowExW(0, L"BUTTON", L"备份",
             WS_CHILD | WS_VISIBLE | BS_AUTOCHECKBOX,
-            0, 0, CHK_W, CHK_H, hwnd, (HMENU)300, NULL, NULL);
+            0, 0, 10, 10, hwnd, (HMENU)300, NULL, NULL);
         SendMessageW(g_hChkBackup, WM_SETFONT, (WPARAM)hFont, TRUE);
         SendMessageW(g_hChkBackup, BM_SETCHECK, BST_CHECKED, 0);
 
         /* 问号帮助图标（点击显示文件列表） */
         g_hHelpIcon = CreateWindowExW(0, L"STATIC", L"?",
             WS_CHILD | WS_VISIBLE | SS_NOTIFY | SS_CENTER,
-            0, 0, HELP_W, HELP_H, hwnd, (HMENU)400, NULL, NULL);
+            0, 0, 10, 10, hwnd, (HMENU)400, NULL, NULL);
         HFONT hHelpFont = CreateFontW(18, 0, 0, 0, FW_BOLD, FALSE, FALSE, FALSE,
             DEFAULT_CHARSET, OUT_DEFAULT_PRECIS, CLIP_DEFAULT_PRECIS,
             DEFAULT_QUALITY, DEFAULT_PITCH | FF_SWISS, L"Microsoft YaHei");
@@ -940,6 +972,10 @@ static LRESULT CALLBACK WndProc(HWND hwnd, UINT msg, WPARAM wParam, LPARAM lPara
         SendMessageW(g_hLink, WM_SETFONT, (WPARAM)hLinkFont, TRUE);
 
         g_hLinkBrush = (HBRUSH)GetStockObject(HOLLOW_BRUSH);
+
+        /* 按文字自适应测量复选框与问号图标的尺寸 */
+        MeasureButtonCtrl(g_hChkBackup, &g_chkW, &g_chkH);
+        MeasureTextCtrl(g_hHelpIcon, 8, 4, &g_helpW, &g_helpH);
 
         LayoutChildren(hwnd);
         break;
