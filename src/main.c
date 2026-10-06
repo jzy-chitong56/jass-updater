@@ -1004,6 +1004,8 @@ static LRESULT CALLBACK WndProc(HWND hwnd, UINT msg, WPARAM wParam, LPARAM lPara
             /* 点击问号图标，显示更新/备份的文件列表 */
             wchar_t msg[1024];
             WBUF_INIT(msg, 1024);
+            WBUF_APPEND(msg, 1024, L"本工具旨在为不更新家猫插件的用户获取家猫最新版暴雪库\r\n");
+            WBUF_APPEND(msg, 1024, L"更新后可解析新增API，但新增句柄类型无法高亮\r\n\r\n");
             WBUF_APPEND(msg, 1024, L"将更新和备份以下文件：\r\n\r\n");
             for (int i = 0; i < g_fileCount; i++) {
                 WBUF_APPEND(msg, 1024, L"  ");
