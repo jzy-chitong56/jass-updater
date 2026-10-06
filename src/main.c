@@ -914,8 +914,8 @@ static LRESULT CALLBACK WndProc(HWND hwnd, UINT msg, WPARAM wParam, LPARAM lPara
             DEFAULT_QUALITY, DEFAULT_PITCH | FF_SWISS, L"Microsoft YaHei");
         SendMessageW(g_hBtn, WM_SETFONT, (WPARAM)hFont, TRUE);
 
-        /* "备份库文件" 复选框（默认勾选） */
-        g_hChkBackup = CreateWindowExW(0, L"BUTTON", L"备份库文件",
+        /* "备份" 复选框（默认勾选） */
+        g_hChkBackup = CreateWindowExW(0, L"BUTTON", L"更新前先备份",
             WS_CHILD | WS_VISIBLE | BS_AUTOCHECKBOX,
             0, 0, CHK_W, CHK_H, hwnd, (HMENU)300, NULL, NULL);
         SendMessageW(g_hChkBackup, WM_SETFONT, (WPARAM)hFont, TRUE);
@@ -975,7 +975,7 @@ static LRESULT CALLBACK WndProc(HWND hwnd, UINT msg, WPARAM wParam, LPARAM lPara
                 WBUF_APPEND(msg, 1024, L"\r\n");
             }
             WBUF_APPEND(msg, 1024, L"\r\n备份文件会保留在原目录，命名格式为 原名_back_日期_时间。\r\n备份过多时请自行手动删除旧备份文件。");
-            MessageBoxW(hwnd, msg, L"备份库文件说明", MB_OK | MB_ICONINFORMATION);
+            MessageBoxW(hwnd, msg, L"备份说明", MB_OK | MB_ICONINFORMATION);
         }
         break;
     case WM_UPDATE_DONE: {
