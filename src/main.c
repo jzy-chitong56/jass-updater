@@ -391,7 +391,7 @@ static BYTE *DownloadFile(const wchar_t *fileName, DWORD *outSize)
     WBUF_APPEND(fullUrl, 512, urlPath);
     Log(L"[下载] 请求: %ls", fullUrl);
 
-    hSession = WinHttpOpen(L"JassUpdater/1.0",
+    hSession = WinHttpOpen(L"家猫Jass更新工具",
         WINHTTP_ACCESS_TYPE_DEFAULT_PROXY,
         WINHTTP_NO_PROXY_NAME, WINHTTP_NO_PROXY_BYPASS, 0);
     if (!hSession) { Log(L"[下载] WinHttpOpen 失败"); goto done; }
@@ -915,7 +915,7 @@ static LRESULT CALLBACK WndProc(HWND hwnd, UINT msg, WPARAM wParam, LPARAM lPara
         SendMessageW(g_hBtn, WM_SETFONT, (WPARAM)hFont, TRUE);
 
         /* "备份" 复选框（默认勾选） */
-        g_hChkBackup = CreateWindowExW(0, L"BUTTON", L"更新前先备份",
+        g_hChkBackup = CreateWindowExW(0, L"BUTTON", L"备份",
             WS_CHILD | WS_VISIBLE | BS_AUTOCHECKBOX,
             0, 0, CHK_W, CHK_H, hwnd, (HMENU)300, NULL, NULL);
         SendMessageW(g_hChkBackup, WM_SETFONT, (WPARAM)hFont, TRUE);
@@ -1056,7 +1056,7 @@ int WINAPI WinMain(HINSTANCE hInst, HINSTANCE hPrev, LPSTR lpCmd, int nShow)
     wc.hbrBackground = (HBRUSH)(COLOR_WINDOW + 1);
     RegisterClassW(&wc);
 
-    HWND hwnd = CreateWindowExW(0, L"JassUpdaterWnd", L"家猫Jass插件函数库更新工具 V1.0",
+    HWND hwnd = CreateWindowExW(0, L"JassUpdaterWnd", L"家猫Jass插件函数库更新工具 V1.1",
         WS_OVERLAPPEDWINDOW & ~WS_THICKFRAME & ~WS_MAXIMIZEBOX,
         CW_USEDEFAULT, CW_USEDEFAULT, 460, 260,
         NULL, NULL, hInst, NULL);
