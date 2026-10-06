@@ -790,6 +790,73 @@ static HWND g_hLink = NULL;
 static HWND g_hChkBackup = NULL;
 static HBRUSH g_hLinkBrush = NULL;
 
+/* 更新线程与进度框 */
+#define WM_UPDATE_DONE  (WM_USER + 100)
+static HWND g_hProgress = NULL;
+static HANDLE g_hThread = NULL;
+static volatile BOOL g_updateRunning = FALSE;
+static UpdateError g_updateResult = ERR_NONE;
+
+static DWORD WINAPI UpdateThreadProc(LPVOID param)
+{
+    BOOL doBackup = (BOOL)(param ? 1 : 0);
+    g_updateResult = DoUpdate(doBackup);
+    /* 通知主线程更新完成 */
+    PostMessageW(g_hProgress ? GetWindow(g_hProgress, GW_OWNER) : NULL,
+                 WM_UPDATE_DONE, 0, 0);
+    return 0;
+}
+
+/* 进度提示框（非模态，不阻塞 UI） */
+static void ShowProgressDialog(HWND hwndOwner)
+{
+    HINSTANCE hInst = (HINSTANCE)GetWindowLongPtrW(hwndOwner, GWLP_HINSTANCE);
+
+    static BOOL classRegistered = FALSE;
+    if (!classRegistered) {
+        WNDCLASSW wc = {0};
+        wc.lpfnWndProc = DefWindowProcW;
+        wc.hInstance = hInst;
+        wc.lpszClassName = L"JassProgress";
+        wc.hCursor = LoadCursor(NULL, IDC_ARROW);
+        wc.hbrBackground = (HBRUSH)(COLOR_WINDOW + 1);
+        RegisterClassW(&wc);
+        classRegistered = TRUE;
+    }
+
+    int dlgW = 420, dlgH = 160;
+    g_hProgress = CreateWindowExW(
+        WS_EX_DLGMODALFRAME | WS_EX_TOPMOST,
+        L"JassProgress", L"正在更新",
+        WS_POPUP | WS_CAPTION,
+        CW_USEDEFAULT, CW_USEDEFAULT, dlgW, dlgH,
+        hwndOwner, NULL, hInst, NULL);
+    if (!g_hProgress) return;
+
+    /* 提示文本 */
+    CreateWindowExW(0, L"STATIC",
+        L"正在更新中，请稍候...\n\n如果等待过久，可手动关闭程序。",
+        WS_CHILD | WS_VISIBLE | SS_LEFT | SS_CENTERIMAGE,
+        20, 15, dlgW - 40, dlgH - 30, g_hProgress, NULL, hInst, NULL);
+
+    HFONT hFont = CreateFontW(16, 0, 0, 0, FW_NORMAL, FALSE, FALSE, FALSE,
+        DEFAULT_CHARSET, OUT_DEFAULT_PRECIS, CLIP_DEFAULT_PRECIS,
+        DEFAULT_QUALITY, DEFAULT_PITCH | FF_SWISS, L"Microsoft YaHei");
+    HWND hStatic = GetWindow(g_hProgress, GW_CHILD);
+    SendMessageW(hStatic, WM_SETFONT, (WPARAM)hFont, TRUE);
+
+    /* 居中 */
+    RECT rcOwner, rcDlg;
+    GetWindowRect(hwndOwner, &rcOwner);
+    GetWindowRect(g_hProgress, &rcDlg);
+    int x = rcOwner.left + ((rcOwner.right - rcOwner.left) - (rcDlg.right - rcDlg.left)) / 2;
+    int y = rcOwner.top + ((rcOwner.bottom - rcOwner.top) - (rcDlg.bottom - rcDlg.top)) / 2;
+    SetWindowPos(g_hProgress, NULL, x, y, 0, 0, SWP_NOSIZE | SWP_NOZORDER);
+
+    ShowWindow(g_hProgress, SW_SHOW);
+    UpdateWindow(g_hProgress);
+}
+
 /* 控件尺寸（固定） */
 #define BTN_W       180
 #define BTN_H       45
@@ -862,38 +929,65 @@ static LRESULT CALLBACK WndProc(HWND hwnd, UINT msg, WPARAM wParam, LPARAM lPara
         break;
     case WM_COMMAND:
         if (LOWORD(wParam) == 100 && HIWORD(wParam) == BN_CLICKED) {
-            EnableWindow(g_hBtn, FALSE);
-            BOOL doBackup = (SendMessageW(g_hChkBackup, BM_GETCHECK, 0, 0) == BST_CHECKED);
-            UpdateError err = DoUpdate(doBackup);
-            EnableWindow(g_hBtn, TRUE);
+            if (g_updateRunning) return 0; /* 防止重复点击 */
 
-            if (err == ERR_NONE) {
-                ShowCustomMsgBox(L"更新成功", L"所有插件静态文件已更新完毕！", L"请关闭程序");
-            } else {
-                const wchar_t *reason = L"未知错误";
-                switch (err) {
-                case ERR_PLUGIN_NOT_FOUND:
-                    reason = L"找不到插件，可能未安装";
-                    break;
-                case ERR_DOWNLOAD_FAILED:
-                    reason = L"下载文件失败，请检查网络后重试";
-                    break;
-                case ERR_WRITE_FAILED:
-                    reason = L"文件写入失败，请检查插件目录是否受到系统文件保护，请关闭保护后重试";
-                    break;
-                case ERR_REPLACE_FAILED:
-                    reason = L"替换文件失败";
-                    break;
-                default:
-                    break;
-                }
-                ShowCustomMsgBox(L"更新失败", reason, L"确定");
-            }
+            BOOL doBackup = (SendMessageW(g_hChkBackup, BM_GETCHECK, 0, 0) == BST_CHECKED);
+            g_updateRunning = TRUE;
+            EnableWindow(g_hBtn, FALSE);
+
+            /* 显示进度提示框 */
+            ShowProgressDialog(hwnd);
+
+            /* 在后台线程执行更新，不阻塞 UI */
+            g_hThread = CreateThread(NULL, 0, UpdateThreadProc,
+                (LPVOID)(doBackup ? 1 : 0), 0, NULL);
         } else if (LOWORD(wParam) == 200 && HIWORD(wParam) == STN_CLICKED) {
             /* 点击"查看源码"，打开 GitHub 仓库 */
             ShellExecuteW(NULL, L"open", GITHUB_REPO_URL, NULL, NULL, SW_SHOWNORMAL);
         }
         break;
+    case WM_UPDATE_DONE: {
+        /* 更新线程完成 */
+        if (g_hThread) {
+            WaitForSingleObject(g_hThread, INFINITE);
+            CloseHandle(g_hThread);
+            g_hThread = NULL;
+        }
+        g_updateRunning = FALSE;
+
+        /* 关闭进度框 */
+        if (g_hProgress) {
+            DestroyWindow(g_hProgress);
+            g_hProgress = NULL;
+        }
+
+        EnableWindow(g_hBtn, TRUE);
+
+        UpdateError err = g_updateResult;
+        if (err == ERR_NONE) {
+            ShowCustomMsgBox(L"更新成功", L"所有插件静态文件已更新完毕！", L"请关闭程序");
+        } else {
+            const wchar_t *reason = L"未知错误";
+            switch (err) {
+            case ERR_PLUGIN_NOT_FOUND:
+                reason = L"找不到插件，可能未安装";
+                break;
+            case ERR_DOWNLOAD_FAILED:
+                reason = L"下载文件失败，请检查网络后重试";
+                break;
+            case ERR_WRITE_FAILED:
+                reason = L"文件写入失败，请检查插件目录是否受到系统文件保护，请关闭保护后重试";
+                break;
+            case ERR_REPLACE_FAILED:
+                reason = L"替换文件失败";
+                break;
+            default:
+                break;
+            }
+            ShowCustomMsgBox(L"更新失败", reason, L"确定");
+        }
+        break;
+    }
     case WM_CTLCOLORSTATIC: {
         HDC hdc = (HDC)wParam;
         if ((HWND)lParam == g_hLink) {
