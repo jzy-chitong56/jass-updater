@@ -863,7 +863,7 @@ static void ShowProgressDialog(HWND hwndOwner)
 #define BTN_H       45
 #define LINK_W      80
 #define LINK_H      20
-#define CHK_W       120
+#define CHK_W       70
 #define CHK_H       25
 #define HELP_W      20
 #define HELP_H      25
