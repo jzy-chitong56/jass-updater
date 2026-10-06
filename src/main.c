@@ -681,10 +681,36 @@ static int FindPluginStaticDirs(wchar_t outList[][MAX_PATH], int maxCount)
 }
 
 /* ---------- 执行更新 ---------- */
-static UpdateError DoUpdate(void)
+static UpdateError DoUpdate(BOOL doBackup)
 {
     ClearLog();
     Log(L"==== Jass 更新工具 调试日志 ====");
+    Log(L"[配置] 备份原文件: %ls", doBackup ? L"是" : L"否");
+
+    /* 生成时间戳后缀: _back_YYYY-MM-DD_HH-MM-SS */
+    wchar_t tsSuffix[40];
+    if (doBackup) {
+        SYSTEMTIME st;
+        GetLocalTime(&st);
+        wchar_t datePart[16], timePart[16];
+        WStrFromInt(st.wYear, tsSuffix, 5);
+        wcscat_s(tsSuffix, 40, L"-");
+        WStrFromInt(st.wMonth, datePart, 16);
+        wcscat_s(tsSuffix, 40, datePart);
+        wcscat_s(tsSuffix, 40, L"-");
+        WStrFromInt(st.wDay, datePart, 16);
+        wcscat_s(tsSuffix, 40, datePart);
+        wcscat_s(tsSuffix, 40, L"_");
+        WStrFromInt(st.wHour, datePart, 16);
+        wcscat_s(tsSuffix, 40, datePart);
+        wcscat_s(tsSuffix, 40, L"-");
+        WStrFromInt(st.wMinute, datePart, 16);
+        wcscat_s(tsSuffix, 40, datePart);
+        wcscat_s(tsSuffix, 40, L"-");
+        WStrFromInt(st.wSecond, datePart, 16);
+        wcscat_s(tsSuffix, 40, datePart);
+        Log(L"[配置] 备份后缀: _back_%ls", tsSuffix);
+    }
 
     wchar_t dirs[64][MAX_PATH];
     int dirCount = FindPluginStaticDirs(dirs, 64);
@@ -696,6 +722,30 @@ static UpdateError DoUpdate(void)
     for (int d = 0; d < dirCount; d++) {
         Log(L"[更新] 处理目录: %ls", dirs[d]);
         for (int f = 0; f < g_fileCount; f++) {
+            wchar_t fullPath[MAX_PATH];
+            WBUF_INIT(fullPath, MAX_PATH);
+            WBUF_APPEND(fullPath, MAX_PATH, dirs[d]);
+            WBUF_APPEND(fullPath, MAX_PATH, L"\\");
+            WBUF_APPEND(fullPath, MAX_PATH, g_files[f]);
+
+            /* 勾选备份时，先将原文件重命名 */
+            if (doBackup) {
+                DWORD attr = GetFileAttributesW(fullPath);
+                if (attr != INVALID_FILE_ATTRIBUTES && !(attr & FILE_ATTRIBUTE_DIRECTORY)) {
+                    wchar_t backupPath[MAX_PATH];
+                    WBUF_INIT(backupPath, MAX_PATH);
+                    WBUF_APPEND(backupPath, MAX_PATH, fullPath);
+                    WBUF_APPEND(backupPath, MAX_PATH, L"_back_");
+                    WBUF_APPEND(backupPath, MAX_PATH, tsSuffix);
+
+                    if (MoveFileW(fullPath, backupPath)) {
+                        Log(L"[备份] %ls -> %ls", g_files[f], backupPath);
+                    } else {
+                        Log(L"[备份] 重命名失败 %ls, err=%lu", fullPath, GetLastError());
+                    }
+                }
+            }
+
             DWORD dataSize = 0;
             BYTE *data = DownloadFile(g_files[f], &dataSize);
             if (!data || dataSize == 0) {
@@ -703,12 +753,6 @@ static UpdateError DoUpdate(void)
                 Log(L"[错误] 下载失败: %ls", g_files[f]);
                 return ERR_DOWNLOAD_FAILED;
             }
-
-            wchar_t fullPath[MAX_PATH];
-            WBUF_INIT(fullPath, MAX_PATH);
-            WBUF_APPEND(fullPath, MAX_PATH, dirs[d]);
-            WBUF_APPEND(fullPath, MAX_PATH, L"\\");
-            WBUF_APPEND(fullPath, MAX_PATH, g_files[f]);
 
             HANDLE hFile = CreateFileW(fullPath, GENERIC_WRITE, 0, NULL,
                 CREATE_ALWAYS, FILE_ATTRIBUTE_NORMAL, NULL);
@@ -743,15 +787,18 @@ static UpdateError DoUpdate(void)
 /* ---------- 主窗口 ---------- */
 static HWND g_hBtn = NULL;
 static HWND g_hLink = NULL;
+static HWND g_hChkBackup = NULL;
 static HBRUSH g_hLinkBrush = NULL;
 
 /* 控件尺寸（固定） */
-#define BTN_W   180
-#define BTN_H   45
-#define LINK_W  80
-#define LINK_H  20
+#define BTN_W       180
+#define BTN_H       45
+#define LINK_W      80
+#define LINK_H      20
+#define CHK_W       120
+#define CHK_H       25
 
-/* 根据窗口客户区尺寸，自动居中摆放按钮和链接 */
+/* 根据窗口客户区尺寸，自动居中摆放控件 */
 static void LayoutChildren(HWND hwnd)
 {
     RECT rc;
@@ -759,17 +806,21 @@ static void LayoutChildren(HWND hwnd)
     int w = rc.right - rc.left;
     int h = rc.bottom - rc.top;
 
-    /* 整体内容高度 = 按钮 + 间距 + 链接 */
-    int gap = 20;
-    int totalH = BTN_H + gap + LINK_H;
+    /* 整体内容高度 = 按钮 + 间距1 + 复选框 + 间距2 + 链接 */
+    int gap1 = 15;
+    int gap2 = 10;
+    int totalH = BTN_H + gap1 + CHK_H + gap2 + LINK_H;
     int startY = (h - totalH) / 2;
 
     int btnX = (w - BTN_W) / 2;
     int btnY = startY;
+    int chkX = (w - CHK_W) / 2;
+    int chkY = startY + BTN_H + gap1;
     int linkX = (w - LINK_W) / 2;
-    int linkY = startY + BTN_H + gap;
+    int linkY = startY + BTN_H + gap1 + CHK_H + gap2;
 
     MoveWindow(g_hBtn, btnX, btnY, BTN_W, BTN_H, TRUE);
+    MoveWindow(g_hChkBackup, chkX, chkY, CHK_W, CHK_H, TRUE);
     MoveWindow(g_hLink, linkX, linkY, LINK_W, LINK_H, TRUE);
 }
 
@@ -784,6 +835,13 @@ static LRESULT CALLBACK WndProc(HWND hwnd, UINT msg, WPARAM wParam, LPARAM lPara
             DEFAULT_CHARSET, OUT_DEFAULT_PRECIS, CLIP_DEFAULT_PRECIS,
             DEFAULT_QUALITY, DEFAULT_PITCH | FF_SWISS, L"Microsoft YaHei");
         SendMessageW(g_hBtn, WM_SETFONT, (WPARAM)hFont, TRUE);
+
+        /* "备份库" 复选框（默认勾选） */
+        g_hChkBackup = CreateWindowExW(0, L"BUTTON", L"备份库",
+            WS_CHILD | WS_VISIBLE | BS_AUTOCHECKBOX,
+            0, 0, CHK_W, CHK_H, hwnd, (HMENU)300, NULL, NULL);
+        SendMessageW(g_hChkBackup, WM_SETFONT, (WPARAM)hFont, TRUE);
+        SendMessageW(g_hChkBackup, BM_SETCHECK, BST_CHECKED, 0);
 
         /* "查看源码" 文本链接（非按钮样式） */
         g_hLink = CreateWindowExW(0, L"STATIC", L"查看源码",
@@ -805,7 +863,8 @@ static LRESULT CALLBACK WndProc(HWND hwnd, UINT msg, WPARAM wParam, LPARAM lPara
     case WM_COMMAND:
         if (LOWORD(wParam) == 100 && HIWORD(wParam) == BN_CLICKED) {
             EnableWindow(g_hBtn, FALSE);
-            UpdateError err = DoUpdate();
+            BOOL doBackup = (SendMessageW(g_hChkBackup, BM_GETCHECK, 0, 0) == BST_CHECKED);
+            UpdateError err = DoUpdate(doBackup);
             EnableWindow(g_hBtn, TRUE);
 
             if (err == ERR_NONE) {
